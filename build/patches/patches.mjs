@@ -44,6 +44,37 @@ export const patches = [
     replace: 'return (0, o.join)(c.getDefaultCriticalAppPathOrThrow("userData"), e3);',
   },
   {
+    // The shell builds its signed-in user from the session cookie plus
+    // /api/v1/user/profile/me/. Ask the DevTool's local account
+    // (globalThis.__tvreMockUser) first, so the shell signs in without a
+    // TradingView account and keeps its app state on disk.
+    id: 'mock/account',
+    file: MAIN,
+    find: `      async updateCurrentUser() {
+        let e3, t3 = { id: void 0 };
+        if (this.session) try {`,
+    replace: inject('mock-account.js').replace(/\n$/, ''),
+  },
+  {
+    id: 'mock/sign-in',
+    file: MAIN,
+    find: `      async doSignIn(e3) {
+        this.currentUser.isAuthenticated ? (0, u.Ow)().warn("Requesting sign in when authentication is active") : await this.authHandler.signIn(e3);
+      }`,
+    replace: inject('mock-sign-in.js').replace(/\n$/, ''),
+  },
+  {
+    // The first-launch onboarding belongs to TradingView's own sign-in: it
+    // walks a new account through the website. With the local account there is
+    // nothing to onboard, and its dialog offers a Sign in that would start the
+    // real flow. Skip it while the local account is in use.
+    id: 'mock/no-onboarding',
+    file: MAIN,
+    find: '(0, c.k)().get("isFirstSuccessfullAuthAttempt") && !(0, A.D0)().advanced.disableAppOnboarding && !$p() && (0, xt.Dv)().showAppOnboardingDialog(H_.AppFirstLaunch);',
+    replace:
+      '!(globalThis.__tvreMockUser && globalThis.__tvreMockUser.active()) && (0, c.k)().get("isFirstSuccessfullAuthAttempt") && !(0, A.D0)().advanced.disableAppOnboarding && !$p() && (0, xt.Dv)().showAppOnboardingDialog(H_.AppFirstLaunch);',
+  },
+  {
     id: 'updater/no-startup-check',
     file: MAIN,
     find: '(0, M.j9)() || xu().checkForUpdates();',

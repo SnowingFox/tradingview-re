@@ -7,6 +7,7 @@
  * tradingview.com but not its JavaScript, and exposes nothing to the page.
  */
 import { ipcRenderer } from 'electron';
+import type { MockAccountPatch, MockAccountStatus } from '../common/mock.js';
 import { CHANNELS, type DevToolAction, type DevToolInfo, type IpcRecord, TAB_FLAG } from '../common/protocol.js';
 import { mountPanel } from './panel.js';
 
@@ -17,6 +18,9 @@ function start(): void {
 		info: () => ipcRenderer.invoke(CHANNELS.info) as Promise<DevToolInfo>,
 		action: (action: DevToolAction) => ipcRenderer.invoke(CHANNELS.action, action),
 		clear: () => ipcRenderer.invoke(CHANNELS.clear),
+		localAccount: () => ipcRenderer.invoke(CHANNELS.localAccount) as Promise<MockAccountStatus>,
+		setLocalAccount: (patch: MockAccountPatch) =>
+			ipcRenderer.invoke(CHANNELS.localAccountSet, patch) as Promise<MockAccountStatus>,
 		subscribe(onRecords) {
 			if (listener) {
 				return;

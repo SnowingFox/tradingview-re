@@ -4,6 +4,8 @@
  * tell them apart from TradingView's own `tvd:*` traffic.
  */
 
+import type { MockAccountStatus } from './mock.js';
+
 export const CHANNELS = {
 	/** invoke → DevToolInfo */
 	info: 'tvd-re:devtool:info',
@@ -17,6 +19,10 @@ export const CHANNELS = {
 	records: 'tvd-re:devtool:ipc-records',
 	/** invoke → void: clear the recorded history */
 	clear: 'tvd-re:devtool:ipc-clear',
+	/** invoke → MockAccountStatus: the local account the shell is signed in as */
+	localAccount: 'tvd-re:devtool:local-account',
+	/** invoke(MockAccountPatch) → MockAccountStatus */
+	localAccountSet: 'tvd-re:devtool:local-account-set',
 } as const;
 
 /** Command-line flag the patched tab options add, so the preload only mounts in chart tabs. */
@@ -56,6 +62,8 @@ export interface DevToolInfo {
 		arch: string;
 		/** running under `bun run dev` (preload rebuilds reload the tab) */
 		dev: boolean;
+		/** running under `--tvre-quiet` (windows stay offscreen, no focus stealing) */
+		quiet: boolean;
 	};
 	paths: {
 		userData: string;
@@ -67,6 +75,10 @@ export interface DevToolInfo {
 		cookieName: string;
 		/** whether the session cookie is present; its value never leaves the main process */
 		signedIn: boolean;
+		/** which source the shell's user came from */
+		source: 'cookie' | 'local' | 'none';
+		/** the DevTool's local account */
+		local: MockAccountStatus;
 	};
 	/** TradingView's own environment overrides that are set for this launch */
 	env: Record<string, string>;
@@ -84,3 +96,5 @@ export type DevToolAction =
 	| 'reveal-profile'
 	| 'reveal-logs'
 	| 'copy-diagnostics';
+
+export type { MockAccount, MockAccountPatch, MockAccountStatus, MockPlan } from './mock.js';

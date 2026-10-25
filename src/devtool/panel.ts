@@ -13,6 +13,13 @@ import {
 	matchesFilter,
 	topChannels,
 } from '../common/format.js';
+import {
+	MOCK_PLANS,
+	type MockAccount,
+	type MockAccountPatch,
+	type MockAccountStatus,
+	PLAN_LABELS,
+} from '../common/mock.js';
 import type { DevToolAction, DevToolInfo, IpcRecord } from '../common/protocol.js';
 import { STYLES } from './styles.js';
 
@@ -26,12 +33,21 @@ const PANEL_LIMIT = 500;
 /** Rows rendered in the IPC list. */
 const VISIBLE_ROWS = 80;
 
+/** Where the shell's signed-in user comes from. */
+const SESSION_SOURCE_LABELS: Record<DevToolInfo['session']['source'], string> = {
+	cookie: 'TradingView cookie',
+	local: 'Local account',
+	none: 'Signed out',
+};
+
 export interface PanelHost {
 	info(): Promise<DevToolInfo>;
 	action(action: DevToolAction): Promise<void>;
 	subscribe(onRecords: (records: IpcRecord[]) => void): void;
 	unsubscribe(): void;
 	clear(): Promise<void>;
+	localAccount(): Promise<MockAccountStatus>;
+	setLocalAccount(patch: MockAccountPatch): Promise<MockAccountStatus>;
 }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -94,6 +110,49 @@ function button(label: string, onClick: () => void, opts: { danger?: boolean } =
 	return h('button', { type: 'button', class: 'button', 'data-danger': opts.danger === true, onClick }, label);
 }
 
+/** Text input that commits on Enter or blur; Escape reverts. Empty input reverts too. */
+function textField(label: string, value: string, onCommit: (value: string) => void): HTMLElement {
+	const input = h('input', {
+		class: 'input',
+		type: 'text',
+		spellcheck: 'false',
+		value,
+		'aria-label': label,
+	});
+	const commit = () => {
+		const next = input.value.trim();
+		if (next === value) {
+			return;
+		}
+		if (next === '') {
+			input.value = value;
+		} else {
+			onCommit(next);
+		}
+	};
+	input.addEventListener('blur', commit);
+	input.addEventListener('keydown', (e) => {
+		if (e.key === 'Enter') {
+			input.blur();
+		} else if (e.key === 'Escape') {
+			input.value = value;
+			input.blur();
+		}
+	});
+	return h('div', { class: 'row' }, h('span', { class: 'label' }, label), input);
+}
+
+function selectField(label: string, value: string, options: string[], onChange: (value: string) => void): HTMLElement {
+	const select = h('select', { class: 'input select', 'aria-label': label });
+	for (const option of options) {
+		const el = h('option', { value: option }, option);
+		el.selected = option === value;
+		select.append(el);
+	}
+	select.addEventListener('change', () => onChange(select.value));
+	return h('div', { class: 'row' }, h('span', { class: 'label' }, label), select);
+}
+
 export function mountPanel(host: PanelHost): void {
 	const container = document.createElement('tradingview-re-devtool');
 	const root = container.attachShadow({ mode: 'closed' });
@@ -152,7 +211,7 @@ export function mountPanel(host: PanelHost): void {
 			row('Electron', app.electron),
 			row('Chromium', app.chrome),
 			row('Node', `${app.node} · ${app.arch}`),
-			row('Mode', app.dev ? 'bun run dev (preload reloads)' : 'Built'),
+			row('Mode', `${app.dev ? 'bun run dev (preload reloads)' : 'Built'}${app.quiet ? ' · quiet' : ''}`),
 			row('Profile', paths.userData, paths.userData),
 		);
 		const status = h(
@@ -165,6 +224,7 @@ export function mountPanel(host: PanelHost): void {
 		sessionBody.replaceChildren(
 			row('Host', session.host, session.host),
 			row('Cookie', session.cookieName),
+			row('User', SESSION_SOURCE_LABELS[session.source]),
 			row('Tab', `#${tab.webContentsId}`, tab.url),
 			row('URL', new URL(tab.url).pathname, tab.url),
 			...envRows,
@@ -174,13 +234,90 @@ export function mountPanel(host: PanelHost): void {
 		);
 	}
 
+	// Account: the local user the desktop shell signs in as (see src/common/mock.ts).
+	const accountTrailing = h('span', { class: 'trailing' });
+	const accountBody = h('div');
+	let localStatus: MockAccountStatus | undefined;
+	/** Signature of what the Account folder shows; avoids rebuilding fields (and focus) needlessly. */
+	let accountShown = '';
+
+	function renderAccount(): void {
+		if (!localStatus) {
+			accountBody.replaceChildren(h('p', { class: 'note' }, 'Loading…'));
+			return;
+		}
+		const { account, applied, enabled, disabledByEnv } = localStatus;
+		const signature = JSON.stringify([account, applied, enabled, disabledByEnv]);
+		// The shell reports "applied" a moment after a change; a rebuild then would
+		// drop the caret from a field the user is still editing.
+		if (signature === accountShown || accountBody.contains(root.activeElement)) {
+			return;
+		}
+		accountShown = signature;
+		accountTrailing.replaceChildren(
+			h(
+				'span',
+				{ class: 'status', 'data-on': applied },
+				disabledByEnv ? 'Disabled by env' : !enabled ? 'Signed out' : applied ? 'Active' : 'Applying…',
+			),
+		);
+		const patch = (next: MockAccountPatch) => {
+			void host
+				.setLocalAccount(next)
+				.then((status) => {
+					localStatus = status;
+					renderAccount();
+					// The shell polls its user every 100ms; re-read info after that.
+					setTimeout(() => void refreshInfo(), 400);
+				})
+				.catch((err) => console.error('[tradingview-re] devtool local account', err));
+		};
+		const plans = [...MOCK_PLANS];
+		accountBody.replaceChildren(
+			textField('Name', account.username, (username) => patch({ username })),
+			textField('Email', account.email, (email) => patch({ email })),
+			selectField(
+				'Plan',
+				PLAN_LABELS[account.plan],
+				plans.map((p) => PLAN_LABELS[p]),
+				(label) => {
+					const plan = plans.find((p) => PLAN_LABELS[p] === label);
+					if (plan) {
+						patch({ plan });
+					}
+				},
+			),
+			selectField('Theme', account.theme, ['dark', 'light'], (theme) =>
+				patch({ theme: theme as MockAccount['theme'] }),
+			),
+			textField('Avatar', account.avatarUrl, (avatarUrl) => patch({ avatarUrl })),
+			button(enabled ? 'Sign out' : 'Sign in locally', () => patch({ enabled: !enabled })),
+			h(
+				'p',
+				{ class: 'note' },
+				disabledByEnv
+					? 'TVRE_LOCAL_ACCOUNT=off was set at launch; the shell uses its normal TradingView sign-in.'
+					: !enabled
+						? 'Signed out. “Sign in locally” (or the shell’s own Sign in) uses this account, no TradingView login.'
+						: !applied
+							? 'Signing in… the shell picks the account up on its next poll.'
+							: 'Shell app state (windows, tabs, settings) is stored under TVUserStorage/id-tvre-local-user.',
+			),
+		);
+	}
+
+	// A deferred rebuild (skipped while a field had focus) runs when focus leaves.
+	root.addEventListener('focusout', () => setTimeout(renderAccount, 0));
+
 	async function refreshInfo(): Promise<void> {
 		try {
 			info = await host.info();
+			localStatus = info.session.local;
 		} catch (err) {
 			console.error('[tradingview-re] devtool info', err);
 		}
 		renderInfo();
+		renderAccount();
 	}
 
 	// IPC: filter, live list, top channels.
@@ -293,6 +430,7 @@ export function mountPanel(host: PanelHost): void {
 			{ class: 'scroll' },
 			folder('App', h('span', { class: 'trailing' }), appBody),
 			folder('Session', sessionTrailing, sessionBody),
+			folder('Account', accountTrailing, accountBody),
 			folder('IPC', ipcTrailing, ipcBody),
 			folder('Tab', h('span', { class: 'trailing' }), tabBody),
 		),
@@ -379,6 +517,7 @@ export function mountPanel(host: PanelHost): void {
 
 	root.append(pill, panel);
 	renderInfo();
+	renderAccount();
 	renderRecords();
 	setOpen(open);
 

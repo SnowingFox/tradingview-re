@@ -1,10 +1,5 @@
 let electron = require("electron");
 // src/common/protocol.ts
-/**
-* IPC contract between the DevTool main module (src/main) and the DevTool
-* preload (src/devtool). Channels use the `tvd-re:` prefix so the recorder can
-* tell them apart from TradingView's own `tvd:*` traffic.
-*/
 var CHANNELS = {
 	/** invoke → DevToolInfo */
 	info: "tvd-re:devtool:info",
@@ -17,7 +12,11 @@ var CHANNELS = {
 	/** push (main → renderer): IpcRecord[] */
 	records: "tvd-re:devtool:ipc-records",
 	/** invoke → void: clear the recorded history */
-	clear: "tvd-re:devtool:ipc-clear"
+	clear: "tvd-re:devtool:ipc-clear",
+	/** invoke → MockAccountStatus: the local account the shell is signed in as */
+	localAccount: "tvd-re:devtool:local-account",
+	/** invoke(MockAccountPatch) → MockAccountStatus */
+	localAccountSet: "tvd-re:devtool:local-account-set"
 };
 // src/common/format.ts
 function formatBytes(bytes) {
@@ -71,6 +70,23 @@ function topChannels(records, count) {
 		n
 	})).sort((a, b) => b.n - a.n || a.channel.localeCompare(b.channel)).slice(0, count);
 }
+// src/common/mock.ts
+var MOCK_PLANS = [
+	"free",
+	"essential",
+	"plus",
+	"premium",
+	"expert",
+	"ultimate"
+];
+var PLAN_LABELS = {
+	free: "Free",
+	essential: "Essential",
+	plus: "Plus",
+	premium: "Premium",
+	expert: "Expert",
+	ultimate: "Ultimate"
+};
 // src/devtool/styles.ts
 /** DEV pill and panel (tweakpane-style, dark in every theme). Scoped to the panel's shadow root. */
 var STYLES = `
@@ -205,6 +221,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--dev-accent)
 .input:hover { background: var(--dev-bg-3); }
 .input:focus { border-color: var(--dev-accent); }
 
+/* Fields laid out as a row (label + control), unlike the full-width filter input. */
+.row .input { min-width: 0; }
+.select {
+	padding: 0 2px;
+	border-color: transparent;
+	color: var(--dev-fg);
+	appearance: auto;
+}
+.select option { background: var(--dev-bg); color: var(--dev-fg); }
+
 .buttons { display: flex; gap: 4px; }
 .buttons .button { flex: 1; }
 .button {
@@ -263,6 +289,12 @@ var FOLDERS_KEY = "tvre.devtool.folders";
 var FILTER_KEY = "tvre.devtool.filter";
 /** Records kept in the panel; the main process keeps its own (longer) history. */
 var PANEL_LIMIT = 500;
+/** Where the shell's signed-in user comes from. */
+var SESSION_SOURCE_LABELS = {
+	cookie: "TradingView cookie",
+	local: "Local account",
+	none: "Signed out"
+};
 function readJson(key, fallback) {
 	try {
 		const value = localStorage.getItem(key);
@@ -303,6 +335,44 @@ function button(label, onClick, opts = {}) {
 		"data-danger": opts.danger === true,
 		onClick
 	}, label);
+}
+/** Text input that commits on Enter or blur; Escape reverts. Empty input reverts too. */
+function textField(label, value, onCommit) {
+	const input = h("input", {
+		class: "input",
+		type: "text",
+		spellcheck: "false",
+		value,
+		"aria-label": label
+	});
+	const commit = () => {
+		const next = input.value.trim();
+		if (next === value) return;
+		if (next === "") input.value = value;
+		else onCommit(next);
+	};
+	input.addEventListener("blur", commit);
+	input.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") input.blur();
+		else if (e.key === "Escape") {
+			input.value = value;
+			input.blur();
+		}
+	});
+	return h("div", { class: "row" }, h("span", { class: "label" }, label), input);
+}
+function selectField(label, value, options, onChange) {
+	const select = h("select", {
+		class: "input select",
+		"aria-label": label
+	});
+	for (const option of options) {
+		const el = h("option", { value: option }, option);
+		el.selected = option === value;
+		select.append(el);
+	}
+	select.addEventListener("change", () => onChange(select.value));
+	return h("div", { class: "row" }, h("span", { class: "label" }, label), select);
 }
 function mountPanel(host) {
 	const container = document.createElement("tradingview-re-devtool");
@@ -349,22 +419,61 @@ function mountPanel(host) {
 			return;
 		}
 		const { app, paths, session, env, tab } = info;
-		appBody.replaceChildren(row("Version", `${app.version}`, app.buildDate), row("Electron", app.electron), row("Chromium", app.chrome), row("Node", `${app.node} · ${app.arch}`), row("Mode", app.dev ? "bun run dev (preload reloads)" : "Built"), row("Profile", paths.userData, paths.userData));
+		appBody.replaceChildren(row("Version", `${app.version}`, app.buildDate), row("Electron", app.electron), row("Chromium", app.chrome), row("Node", `${app.node} · ${app.arch}`), row("Mode", `${app.dev ? "bun run dev (preload reloads)" : "Built"}${app.quiet ? " · quiet" : ""}`), row("Profile", paths.userData, paths.userData));
 		const status = h("span", {
 			class: "status",
 			"data-on": session.signedIn
 		}, session.signedIn ? "Signed in" : "Signed out");
 		sessionTrailing.replaceChildren(status);
 		const envRows = Object.entries(env).map(([k, v]) => row(k.replace(/^TVD_|^TARGET_/, ""), v, k));
-		sessionBody.replaceChildren(row("Host", session.host, session.host), row("Cookie", session.cookieName), row("Tab", `#${tab.webContentsId}`, tab.url), row("URL", new URL(tab.url).pathname, tab.url), ...envRows, ...envRows.length === 0 ? [h("p", { class: "note" }, "No TVD_* overrides set. TVD_HOST points the app at another host.")] : []);
+		sessionBody.replaceChildren(row("Host", session.host, session.host), row("Cookie", session.cookieName), row("User", SESSION_SOURCE_LABELS[session.source]), row("Tab", `#${tab.webContentsId}`, tab.url), row("URL", new URL(tab.url).pathname, tab.url), ...envRows, ...envRows.length === 0 ? [h("p", { class: "note" }, "No TVD_* overrides set. TVD_HOST points the app at another host.")] : []);
 	}
+	const accountTrailing = h("span", { class: "trailing" });
+	const accountBody = h("div");
+	let localStatus;
+	/** Signature of what the Account folder shows; avoids rebuilding fields (and focus) needlessly. */
+	let accountShown = "";
+	function renderAccount() {
+		if (!localStatus) {
+			accountBody.replaceChildren(h("p", { class: "note" }, "Loading…"));
+			return;
+		}
+		const { account, applied, enabled, disabledByEnv } = localStatus;
+		const signature = JSON.stringify([
+			account,
+			applied,
+			enabled,
+			disabledByEnv
+		]);
+		if (signature === accountShown || accountBody.contains(root.activeElement)) return;
+		accountShown = signature;
+		accountTrailing.replaceChildren(h("span", {
+			class: "status",
+			"data-on": applied
+		}, disabledByEnv ? "Disabled by env" : !enabled ? "Signed out" : applied ? "Active" : "Applying…"));
+		const patch = (next) => {
+			host.setLocalAccount(next).then((status) => {
+				localStatus = status;
+				renderAccount();
+				setTimeout(() => void refreshInfo(), 400);
+			}).catch((err) => console.error("[tradingview-re] devtool local account", err));
+		};
+		const plans = [...MOCK_PLANS];
+		accountBody.replaceChildren(textField("Name", account.username, (username) => patch({ username })), textField("Email", account.email, (email) => patch({ email })), selectField("Plan", PLAN_LABELS[account.plan], plans.map((p) => PLAN_LABELS[p]), (label) => {
+			const plan = plans.find((p) => PLAN_LABELS[p] === label);
+			if (plan) patch({ plan });
+		}), selectField("Theme", account.theme, ["dark", "light"], (theme) => patch({ theme })), textField("Avatar", account.avatarUrl, (avatarUrl) => patch({ avatarUrl })), button(enabled ? "Sign out" : "Sign in locally", () => patch({ enabled: !enabled })), h("p", { class: "note" }, disabledByEnv ? "TVRE_LOCAL_ACCOUNT=off was set at launch; the shell uses its normal TradingView sign-in." : !enabled ? "Signed out. “Sign in locally” (or the shell’s own Sign in) uses this account, no TradingView login." : !applied ? "Signing in… the shell picks the account up on its next poll." : "Shell app state (windows, tabs, settings) is stored under TVUserStorage/id-tvre-local-user."));
+	}
+	root.addEventListener("focusout", () => setTimeout(renderAccount, 0));
 	async function refreshInfo() {
 		try {
 			info = await host.info();
+			localStatus = info.session.local;
 		} catch (err) {
 			console.error("[tradingview-re] devtool info", err);
 		}
 		renderInfo();
+		renderAccount();
 	}
 	const ipcTrailing = h("span", { class: "trailing" }, "0");
 	const list = h("ul", {
@@ -416,7 +525,7 @@ function mountPanel(host) {
 		class: "panel",
 		role: "dialog",
 		"aria-label": "Developer tools"
-	}, h("div", { class: "header" }, h("span", {}, "TradingView RE · DevTool"), closeButton), h("div", { class: "scroll" }, folder("App", h("span", { class: "trailing" }), appBody), folder("Session", sessionTrailing, sessionBody), folder("IPC", ipcTrailing, ipcBody), folder("Tab", h("span", { class: "trailing" }), tabBody)));
+	}, h("div", { class: "header" }, h("span", {}, "TradingView RE · DevTool"), closeButton), h("div", { class: "scroll" }, folder("App", h("span", { class: "trailing" }), appBody), folder("Session", sessionTrailing, sessionBody), folder("Account", accountTrailing, accountBody), folder("IPC", ipcTrailing, ipcBody), folder("Tab", h("span", { class: "trailing" }), tabBody)));
 	const pill = h("button", {
 		type: "button",
 		class: "pill",
@@ -482,6 +591,7 @@ function mountPanel(host) {
 	});
 	root.append(pill, panel);
 	renderInfo();
+	renderAccount();
 	renderRecords();
 	setOpen(open);
 	const attach = () => {
@@ -505,6 +615,8 @@ function start() {
 		info: () => electron.ipcRenderer.invoke(CHANNELS.info),
 		action: (action) => electron.ipcRenderer.invoke(CHANNELS.action, action),
 		clear: () => electron.ipcRenderer.invoke(CHANNELS.clear),
+		localAccount: () => electron.ipcRenderer.invoke(CHANNELS.localAccount),
+		setLocalAccount: (patch) => electron.ipcRenderer.invoke(CHANNELS.localAccountSet, patch),
 		subscribe(onRecords) {
 			if (listener) return;
 			listener = (_event, records) => onRecords(records);

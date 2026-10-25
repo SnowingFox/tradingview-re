@@ -40029,6 +40029,25 @@ at ${n3 ?? "unknown"}`;
       }
       async updateCurrentUser() {
         let e3, t3 = { id: void 0 };
+        // [tradingview-re] Local account (DevTool, src/main/mockAccount.ts). The
+        // shell signs in as a local user instead of using the session cookie.
+        // The first sign-in goes through updateAuthentication() like a real one,
+        // so app state is restored from TVUserStorage/id-<id> and saved there;
+        // later edits only refresh the claims, which must not reset windows.
+        const __tvre = globalThis.__tvreMockUser;
+        if (__tvre && __tvre.active()) {
+          const __tvreSession = __tvre.session();
+          if (__tvreSession.value !== this.currentUser.session?.value) {
+            const __tvreProfile = __tvre.profile();
+            if (this.currentUser.isAuthenticated && true === this.currentUser.session?.mock) {
+              const __tvreUser = new yD.K(iO.VY(__tvreProfile), __tvreSession);
+              this.currentUser = __tvreUser, this.userChangeEvent.next(__tvreUser.claims);
+            } else {
+              (0, M.uY)(this.updateAuthentication(__tvreProfile, __tvreSession));
+            }
+          }
+          return;
+        }
         if (this.session) try {
           const n3 = await this.session.cookies.get({ name: (0, A.D0)().urls.cookieName });
           if (0 === n3.length) return void (0, M.uY)(this.updateAuthentication(t3));
@@ -40045,6 +40064,15 @@ at ${n3 ?? "unknown"}`;
         (0, M.uY)(this.updateAuthentication(t3, e3));
       }
       async doSignIn(e3) {
+        // [tradingview-re] Sign in locally (DevTool, src/main/mockAccount.ts):
+        // the shell's sign-in entry points (menu, platform request, first
+        // launch) enable the local account instead of opening the welcome
+        // dialog and the TradingView browser flow. The user poll applies it.
+        const __tvre = globalThis.__tvreMockUser;
+        if (__tvre && __tvre.available()) {
+          __tvre.signIn();
+          return;
+        }
         this.currentUser.isAuthenticated ? (0, u.Ow)().warn("Requesting sign in when authentication is active") : await this.authHandler.signIn(e3);
       }
       showAppOnboardingDialog(e3, t3) {
@@ -40588,7 +40616,7 @@ at ${n3 ?? "unknown"}`;
           e3?.windowRef?.focus();
         }
         this.notifyListeners(za.Initialize), (0, Fa.s)().notify("Session restored"), this.updateMaxWindowCount();
-        (0, c.k)().get("isFirstSuccessfullAuthAttempt") && !(0, A.D0)().advanced.disableAppOnboarding && !$p() && (0, xt.Dv)().showAppOnboardingDialog(H_.AppFirstLaunch);
+        !(globalThis.__tvreMockUser && globalThis.__tvreMockUser.active()) && (0, c.k)().get("isFirstSuccessfullAuthAttempt") && !(0, A.D0)().advanced.disableAppOnboarding && !$p() && (0, xt.Dv)().showAppOnboardingDialog(H_.AppFirstLaunch);
       }
       getAllRestoredTabIds() {
         return this.chartWindows.flatMap(((e3) => e3.tabs.map(((e4) => e4.id))));

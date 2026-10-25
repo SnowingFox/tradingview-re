@@ -20,7 +20,8 @@
 		"lint": "biome check .",
 		"format": "biome check --write .",
 		"extract": "bun scripts/extract.mjs",
-		"check:devtool": "node scripts/cdp-check.mjs"
+		"check:devtool": "node scripts/cdp-check.mjs",
+		"check:mock": "node scripts/cdp-mock-check.mjs"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.15",

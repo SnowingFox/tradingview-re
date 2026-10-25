@@ -131,6 +131,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--dev-accent)
 .input:hover { background: var(--dev-bg-3); }
 .input:focus { border-color: var(--dev-accent); }
 
+/* Fields laid out as a row (label + control), unlike the full-width filter input. */
+.row .input { min-width: 0; }
+.select {
+	padding: 0 2px;
+	border-color: transparent;
+	color: var(--dev-fg);
+	appearance: auto;
+}
+.select option { background: var(--dev-bg); color: var(--dev-fg); }
+
 .buttons { display: flex; gap: 4px; }
 .buttons .button { flex: 1; }
 .button {

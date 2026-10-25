@@ -25,11 +25,6 @@ let node_path = require("node:path");
 node_path = __toESM(node_path, 1);
 let electron = require("electron");
 // src/common/protocol.ts
-/**
-* IPC contract between the DevTool main module (src/main) and the DevTool
-* preload (src/devtool). Channels use the `tvd-re:` prefix so the recorder can
-* tell them apart from TradingView's own `tvd:*` traffic.
-*/
 var CHANNELS = {
 	/** invoke → DevToolInfo */
 	info: "tvd-re:devtool:info",
@@ -42,7 +37,11 @@ var CHANNELS = {
 	/** push (main → renderer): IpcRecord[] */
 	records: "tvd-re:devtool:ipc-records",
 	/** invoke → void: clear the recorded history */
-	clear: "tvd-re:devtool:ipc-clear"
+	clear: "tvd-re:devtool:ipc-clear",
+	/** invoke → MockAccountStatus: the local account the shell is signed in as */
+	localAccount: "tvd-re:devtool:local-account",
+	/** invoke(MockAccountPatch) → MockAccountStatus */
+	localAccountSet: "tvd-re:devtool:local-account-set"
 };
 // src/main/ipcRecorder.ts
 /**
@@ -140,6 +139,209 @@ function clearHistory() {
 	history.length = 0;
 	pending = [];
 }
+// src/common/mock.ts
+var MOCK_PLANS = [
+	"free",
+	"essential",
+	"plus",
+	"premium",
+	"expert",
+	"ultimate"
+];
+/**
+* What the shell derives from `pro_plan` and `badges` (app/index.js, module 12279):
+*   * `pro_plan === ""` → claim `user:plan` is "basic" and `user:pro` is absent;
+*   * any other value → claim `user:pro` is true;
+*   * the first badge whose name starts with "pro" becomes `user:pro_badge_name`,
+*     which the window menu maps to a plan label (app/app/menu/bundle.js).
+*/
+var PLAN_INFO = {
+	free: {
+		proPlan: "",
+		badge: ""
+	},
+	essential: {
+		proPlan: "pro",
+		badge: "pro:pro"
+	},
+	plus: {
+		proPlan: "pro_realtime",
+		badge: "pro:pro_realtime"
+	},
+	premium: {
+		proPlan: "pro_premium",
+		badge: "pro:pro_premium"
+	},
+	expert: {
+		proPlan: "pro_expert",
+		badge: "pro:pro_expert"
+	},
+	ultimate: {
+		proPlan: "pro_premium_expert",
+		badge: "pro:pro_premium_expert"
+	}
+};
+var SESSION_PREFIX = "tvre-mock-session-";
+/** The account is always this user, so its data lives in one TVUserStorage folder. */
+var MOCK_USER_ID = "tvre-local-user";
+var DEFAULT_ACCOUNT = {
+	enabled: true,
+	username: "tvre",
+	email: "",
+	plan: "premium",
+	theme: "dark",
+	avatarUrl: ""
+};
+/** The response UserService parses, built from the local account. */
+function profileFor(account) {
+	const info = PLAN_INFO[account.plan];
+	return {
+		id: MOCK_USER_ID,
+		username: account.username,
+		theme: account.theme,
+		avatars: { small: account.avatarUrl },
+		pro_plan: info.proPlan,
+		badges: info.badge === "" ? [] : [{ name: info.badge }]
+	};
+}
+function str(value, fallback) {
+	return typeof value === "string" ? value : fallback;
+}
+/** Parses a stored value defensively; unknown fields fall back to the defaults. */
+function normalizeAccount(value) {
+	const raw = typeof value === "object" && value !== null ? value : {};
+	const plan = MOCK_PLANS.includes(raw.plan) ? raw.plan : DEFAULT_ACCOUNT.plan;
+	return {
+		enabled: raw.enabled !== false,
+		username: str(raw.username, DEFAULT_ACCOUNT.username) || DEFAULT_ACCOUNT.username,
+		email: str(raw.email, DEFAULT_ACCOUNT.email),
+		plan,
+		theme: raw.theme === "light" ? "light" : "dark",
+		avatarUrl: str(raw.avatarUrl, DEFAULT_ACCOUNT.avatarUrl)
+	};
+}
+/** Merges a patch into `account` and normalizes the result. */
+function applyPatch(account, patch) {
+	return normalizeAccount({
+		...account,
+		...patch
+	});
+}
+// src/main/mockAccount.ts
+/**
+* The DevTool's local account: the desktop shell signs in as this user instead
+* of using a TradingView account, and everything it persists stays on disk.
+*
+* TradingView's shell resolves its own user in the main process, in
+* UserService.updateCurrentUser() (app/index.js): it polls the session cookie,
+* then `GET /api/v1/user/profile/me/`, and derives the claims it gates things
+* on (`user:id`, `user:pro`, `user:plan`, `user:pro_badge_name`). The
+* `mock/account` patch in build/patches makes that method ask
+* `globalThis.__tvreMockUser` first, so this module can answer with a local
+* profile instead — no network round-trip and no tradingview.com session.
+*
+* The first sign-in goes through the shell's own updateAuthentication(), so the
+* usual sign-in work runs: app state is restored from, and saved to,
+* `<userData>/TVUserStorage/id-<MOCK_USER_ID>/settings.json`. Later edits to the
+* account only refresh the claims, because signing out and back in would reset
+* the session's windows and tabs.
+*
+* The shell's own sign-in entry points (menu, platform request, first launch)
+* are routed here too (the `mock/sign-in` patch), so they never open the
+* welcome dialog or the browser. `TVRE_LOCAL_ACCOUNT=off` disables all of this
+* for a launch and restores upstream behaviour.
+*/
+/** `TVRE_LOCAL_ACCOUNT=off` leaves the shell's own account handling alone for this launch. */
+var ENV_KILL = "TVRE_LOCAL_ACCOUNT";
+var STORE_FILE = node_path.default.join("devtool", "local-account.json");
+var LocalAccountStore = class {
+	file = node_path.default.join(electron.app.getPath("userData"), STORE_FILE);
+	disabledByEnv = process.env[ENV_KILL] === "off";
+	account;
+	/** Increments on every edit; part of the session value, so the shell re-reads. */
+	revision = 0;
+	/** Revision the shell last asked for, i.e. what it is showing now. */
+	appliedRevision;
+	constructor() {
+		this.account = this.load();
+	}
+	load() {
+		try {
+			const raw = JSON.parse((0, node_fs.readFileSync)(this.file, "utf8"));
+			this.revision = typeof raw.revision === "number" ? raw.revision : 0;
+			return normalizeAccount(raw.account);
+		} catch {
+			return DEFAULT_ACCOUNT;
+		}
+	}
+	persist() {
+		try {
+			(0, node_fs.mkdirSync)(node_path.default.dirname(this.file), { recursive: true });
+			const body = {
+				version: 1,
+				account: this.account,
+				revision: this.revision
+			};
+			(0, node_fs.writeFileSync)(this.file, `${JSON.stringify(body, null, 2)}\n`);
+		} catch (err) {
+			console.error("[tradingview-re] could not store the local account", err);
+		}
+	}
+	status() {
+		return {
+			account: this.account,
+			enabled: !this.disabledByEnv && this.account.enabled,
+			applied: !this.disabledByEnv && this.account.enabled && this.appliedRevision === this.revision,
+			disabledByEnv: this.disabledByEnv
+		};
+	}
+	/** Applies a patch, persists it, and lets the shell re-read the profile. */
+	set(patch) {
+		const next = applyPatch(this.account, patch);
+		if (JSON.stringify(next) !== JSON.stringify(this.account)) {
+			this.revision++;
+			this.account = next;
+			this.persist();
+		}
+		return this.status();
+	}
+	/** The hook the patched bundle talks to. */
+	hook = {
+		available: () => !this.disabledByEnv,
+		active: () => !this.disabledByEnv && this.account.enabled,
+		signIn: () => {
+			if (!this.account.enabled) this.set({ enabled: true });
+		},
+		profile: () => {
+			this.appliedRevision = this.revision;
+			return profileFor(this.account);
+		},
+		session: () => ({
+			value: `${SESSION_PREFIX}${this.revision}`,
+			revision: this.revision,
+			mock: true
+		})
+	};
+};
+var store;
+function instance() {
+	store ??= new LocalAccountStore();
+	return store;
+}
+/**
+* Publishes the hook for the patched bundle. Called from the DevTool loader at
+* require time, before the app's entry module runs, so UserService finds it as
+* soon as its polling loop starts.
+*/
+function installLocalAccount() {
+	globalThis.__tvreMockUser = instance().hook;
+}
+function localAccountStatus() {
+	return instance().status();
+}
+function setLocalAccount(patch) {
+	return instance().set(patch);
+}
 // src/main/devtool.ts
 /**
 * DevTool main-process module. Loaded by the `devtool/loader` patch before
@@ -164,6 +366,8 @@ var TVD_ENV = [
 	"TVD_SENTRY_FORCE_UPLOAD"
 ];
 var dev = process.env.TVRE_DEV === "1";
+/** `--tvre-quiet`: the launch stays off the desktop (see installQuietMode). */
+var quiet = process.argv.includes("--tvre-quiet");
 /**
 * Overrides as set at launch. Read when this module loads: TradingView later
 * writes TVD_HOST into process.env itself.
@@ -192,9 +396,10 @@ async function info(event) {
 	contents.once("destroyed", () => panels.delete(contents.id));
 	const pkg = readJson(node_path.default.join(electron.app.getAppPath(), "package.json"));
 	const target = sessionTarget();
-	let signedIn = false;
+	const local = localAccountStatus();
+	let cookie = false;
 	try {
-		signedIn = (await contents.session.cookies.get({
+		cookie = (await contents.session.cookies.get({
 			url: target.host,
 			name: target.cookieName
 		})).length > 0;
@@ -208,7 +413,8 @@ async function info(event) {
 			chrome: process.versions.chrome ?? "",
 			node: process.versions.node,
 			arch: process.arch,
-			dev
+			dev,
+			quiet
 		},
 		paths: {
 			userData: electron.app.getPath("userData"),
@@ -217,7 +423,9 @@ async function info(event) {
 		},
 		session: {
 			...target,
-			signedIn
+			signedIn: local.enabled || cookie,
+			source: local.disabledByEnv ? cookie ? "cookie" : "none" : local.enabled ? "local" : cookie ? "cookie" : "none",
+			local
 		},
 		env: launchEnv,
 		tab: {
@@ -225,6 +433,11 @@ async function info(event) {
 			url: contents.getURL()
 		}
 	};
+}
+/** Applies a patch to the local account; the shell re-reads the profile on its next poll. */
+function updateLocal(patch) {
+	if (typeof patch !== "object" || patch === null || Array.isArray(patch)) throw new Error("local account patch must be an object");
+	return setLocalAccount(patch);
 }
 /** The BrowserWindow whose tab strip hosts this tab's BrowserView. */
 function hostWindow(contents) {
@@ -271,9 +484,12 @@ function watchPreload(file) {
 }
 function install() {
 	installIpcRecorder();
+	installLocalAccount();
 	electron.ipcMain.handle(CHANNELS.info, info);
 	electron.ipcMain.handle(CHANNELS.action, runAction);
 	electron.ipcMain.handle(CHANNELS.clear, () => clearHistory());
+	electron.ipcMain.handle(CHANNELS.localAccount, () => localAccountStatus());
+	electron.ipcMain.handle(CHANNELS.localAccountSet, (_event, patch) => updateLocal(patch));
 	electron.ipcMain.on(CHANNELS.subscribe, (event) => subscribe(event.sender));
 	electron.ipcMain.on(CHANNELS.unsubscribe, (event) => unsubscribe(event.sender));
 	const preload = node_path.default.join(electron.app.getAppPath(), "preload/devtool-preload.js");
@@ -284,7 +500,27 @@ function install() {
 	electron.app.whenReady().then(() => {
 		keepPreloadRegistered(electron.session.defaultSession, preload);
 		if (dev) watchPreload(preload);
+		if (quiet) installQuietMode();
 	});
+}
+/**
+* `--tvre-quiet` keeps a test launch off the desktop: the app runs as an
+* accessory (no Dock activation, no menu-bar takeover), its windows are moved
+* offscreen before they show, and `show()` / `focus()` are degraded to
+* `showInactive()`. CDP keeps working, but the app never comes to the front,
+* so automated checks don't steal the mouse and keyboard.
+*/
+function installQuietMode() {
+	electron.app.setActivationPolicy("accessory");
+	const keepOffscreen = (win) => {
+		win.show = () => {
+			if (!win.isVisible()) win.setPosition(-1e4, 0);
+			win.showInactive();
+		};
+		win.focus = () => {};
+	};
+	for (const win of electron.BrowserWindow.getAllWindows()) keepOffscreen(win);
+	electron.app.on("browser-window-created", (_event, win) => keepOffscreen(win));
 }
 /**
 * TradingView calls `defaultSession.setPreloads([target-tvd-host-preload.js])`
