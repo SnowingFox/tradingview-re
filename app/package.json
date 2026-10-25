@@ -1,0 +1,15 @@
+{
+  "name": "tradingview-desktop",
+  "productName": "TradingView",
+  "description": "Experience extra power, extra speed and extra flexibility, all with the same UX you know and love.",
+  "main": "index.js",
+  "version": "3.4.1",
+  "buildDate": 1788860919329,
+  "private": true,
+  "homepage": "https://tradingview.com",
+  "license": "Proprietary",
+  "author": {
+    "name": "TradingView, Inc.",
+    "email": "desktop@tradingview.com"
+  }
+}

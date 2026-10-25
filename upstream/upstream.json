@@ -1,0 +1,14 @@
+{
+  "source": "TradingView.dmg",
+  "name": "TradingView",
+  "version": "3.4.1",
+  "build": "3.4.1.8194",
+  "date": "2026-09-08T09:48:39.329Z",
+  "electronVersion": "41.7.1",
+  "dmgSha256": "cf8cd66b5bc7f3755e1d77c31e068ed7b40fce17a76df9b4086ebff04fe85e32",
+  "fileCount": 172,
+  "beautify": {
+    "formatted": 61,
+    "unformatted": []
+  }
+}
