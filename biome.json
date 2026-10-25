@@ -1,0 +1,29 @@
+{
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"files": {
+		"includes": [
+			"src/**",
+			"scripts/**/*.ts",
+			"vite.config.ts",
+			"tsconfig.json",
+			"biome.json",
+			"package.json",
+			"!!.tradingview-dev",
+			"!!dist"
+		]
+	},
+	"formatter": {
+		"indentStyle": "tab",
+		"lineWidth": 120
+	},
+	"javascript": {
+		"formatter": { "quoteStyle": "single" }
+	},
+	"linter": {
+		"rules": {
+			"preset": "recommended",
+			"style": { "noNonNullAssertion": "off" }
+		}
+	},
+	"assist": { "actions": { "source": { "organizeImports": "on" } } }
+}

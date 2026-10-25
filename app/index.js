@@ -27115,7 +27115,7 @@ ${p2}`, "ERR_UPDATER_INVALID_RELEASE_FEED");
     }
     function bt(e3, t3 = null) {
       const n3 = {};
-      n3.webPreferences = { preload: W.l.makeAppRootPath(t3 ?? ft), devTools: true };
+      n3.webPreferences = { preload: W.l.makeAppRootPath(t3 ?? ft), devTools: true, additionalArguments: ["--tvre-devtool"] };
       const r3 = ht().isFeatureEnabled(pt, false);
       return (0, M.iT)() || r3 || (n3.webPreferences.backgroundThrottling = false), n3.webPreferences.nodeIntegration = e3, n3.webPreferences.contextIsolation = !e3, n3.webPreferences.sandbox = !e3, n3;
     }
@@ -31518,7 +31518,7 @@ sudo snap connect ${Wl}:camera :camera`), i2.dialog.showMessageBoxSync({ message
           i2.app.quit();
         })), (0, Pe.Qh)().on(za.Initialize, (() => {
           this.openForwardedUrl(process.argv.at(-1));
-        })), (0, M.j9)() || xu().checkForUpdates();
+        })), (0, M.j9)() || void 0 /* [tradingview-re] update feed serves the official build */;
       }
       async userPreventedAppClosingDueToUnsavedChanges(e3) {
         let t3 = false;
@@ -40664,7 +40664,7 @@ at ${n3 ?? "unknown"}`;
         jD();
       })), true;
     }
-    i2.app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion"), i2.app.requestSingleInstanceLock() ? (k_(), i2.app.isDefaultProtocolClient("tradingview") || i2.app.setAsDefaultProtocolClient("tradingview"), (0, M.iT)() && !(0, c.k)().get("forcedMacOsEnableHardwareAcceleration") && ((0, c.k)().set("disableHardwareAcceleration", false), (0, c.k)().set("forcedMacOsEnableHardwareAcceleration", true)), (0, c.k)().get("disableHardwareAcceleration") && i2.app.disableHardwareAcceleration(), WD()) : i2.app.quit();
+    i2.app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion"), i2.app.requestSingleInstanceLock() ? (k_(), (0, M.iT)() && !(0, c.k)().get("forcedMacOsEnableHardwareAcceleration") && ((0, c.k)().set("disableHardwareAcceleration", false), (0, c.k)().set("forcedMacOsEnableHardwareAcceleration", true)), (0, c.k)().get("disableHardwareAcceleration") && i2.app.disableHardwareAcceleration(), WD()) : i2.app.quit();
   }, 94001(e2, t2, n2) {
     "use strict";
     n2.d(t2, { x: () => i2, f: () => r2 });
@@ -42244,7 +42244,7 @@ at ${n3 ?? "unknown"}`;
         })));
       }
       static makeAppDataPath(e3) {
-        return (0, o.join)(c.getDefaultCriticalAppPathOrThrow("appData"), r2.app.getName(), e3);
+        return (0, o.join)(c.getDefaultCriticalAppPathOrThrow("userData"), e3);
       }
       static makeAppRootPath(e3) {
         const t3 = r2.app.getAppPath();
@@ -42403,7 +42403,7 @@ at ${n3 ?? "unknown"}`;
       }, r3 = "TVD_HOST", i3 = "TVD_SESSION_COOKIE", o2 = "TVD_DEBUGMODE", s2 = "TVD_SENTRY_FORCE_UPLOAD", c2 = "TVD_SENTRY_DSN";
       r3 in process.env && (e3.urls.defaultHost = process.env[r3] ?? e3.urls.defaultHost, (0, a.ld)().debug(`Configuration.updateConfigFromEnvironment(): "TVD_HOST: ${e3.urls.defaultHost}"`)), i3 in process.env && (e3.urls.cookieName = process.env[i3] ?? e3.urls.cookieName), e3.advanced.debugMode = t3(o2, e3.advanced.debugMode), (0, a.ld)().debug(`Configuration.updateConfigFromEnvironment(): "TVD_DEBUGMODE: ${e3.advanced.debugMode}"`);
       const l2 = t3(s2, e3.sentry.upload);
-      e3.sentry.upload = !e3.advanced.debugMode || l2, e3.sentry.dsn = n3(c2, e3.sentry.dsn);
+      e3.sentry.upload = "TVD_SENTRY_FORCE_UPLOAD" in process.env && l2, e3.sentry.dsn = n3(c2, e3.sentry.dsn);
     }
     function g() {
       let e3 = { urls: { defaultHost: "https://tradingview.com/", authHost: "https://auth.tradingview.com", cookieName: "sessionid", chart: "chart/", profile: "u/" }, windows: { chartInitialWidth: u.u_, chartInitialHeight: u.tj, chartMinWidth: 1e3, chartMinHeight: 700, splash: { width: 450, height: 450 } }, logging: { file: { enabled: true, logLevel: a.$b.Debug, maxFileSize: 100 }, console: { enabled: true, logLevel: a.$b.Debug } }, persistence: { autoSaveInterval: 3e5 }, googleAnalytics: { key: "3LizEk59Qly60mrqxTq8Fw", measurementId: "G-6BZN5RZ7W7", analyticsDevModeSettings: { isDevMode: false, devModeCid: "141456121" } }, sentry: { dsn: "", upload: false }, advanced: { debugMode: false, disableAppOnboarding: false, concurrencyLimit: 2, windowLoadTimeout: 3e4, infoRequestTimeout: 6e4 }, authentication: { waitRedirectTimeout: 12e4 }, update: { appInstallerUrl: "https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.appinstaller", forceDevUpdate: false } };
@@ -54232,5 +54232,12 @@ ${a3}|"; diskutil info /dev/${a3} | grep SMART;`, e4 += `${e4 ? 'printf ",";' : 
   }, i.o = (e2, t2) => Object.prototype.hasOwnProperty.call(e2, t2), i.r = (e2) => {
     "undefined" != typeof Symbol && Symbol.toStringTag && Object.defineProperty(e2, Symbol.toStringTag, { value: "Module" }), Object.defineProperty(e2, "__esModule", { value: true });
   }, i.nmd = (e2) => (e2.paths = [], e2.children || (e2.children = []), e2);
+  // [tradingview-re] DevTool loader (src/main/devtool.ts, built to app/devtool/main.js).
+  // Runs before the entry module so the IPC recorder wraps ipcMain first.
+  try {
+    require("./devtool/main.js").install();
+  } catch (err) {
+    console.error("[tradingview-re] DevTool failed to load", err);
+  }
   i(93906);
 })();

@@ -1,0 +1,11 @@
+# Tooling for this repo
+/node_modules/
+/dist/
+/.tradingview-dev/
+.DS_Store
+*.log
+
+# Scratch output from the first exploration pass
+/bundle/
+/extracted/
+/pretty/
